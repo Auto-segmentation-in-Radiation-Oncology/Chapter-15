@@ -125,6 +125,8 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
         total_ref_area = 0
         distance_ref_to_test = []
         distance_test_to_ref = []
+        ref_weighted_centroid_sum = np.array([0, 0, 0])
+        test_weighted_centroid_sum = np.array([0, 0, 0])
         structure_name = ''
 
         # get the structure name just for fun
@@ -286,6 +288,12 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                                             (testpolygon.difference(contour_intersection)).area
                 total_test_area = total_test_area + testpolygon.area
                 total_ref_area = total_ref_area + refpolygon.area
+                centroid_point = refpolygon.centroid
+                centroid_point_np = np.array([centroid_point.x, centroid_point.y, z_value])
+                ref_weighted_centroid_sum = ref_weighted_centroid_sum + (refpolygon.area * centroid_point_np)
+                centroid_point = testpolygon.centroid
+                centroid_point_np = np.array([centroid_point.x, centroid_point.y, z_value])
+                test_weighted_centroid_sum = test_weighted_centroid_sum + (testpolygon.area * centroid_point_np)
 
                 # if debug == True:
                 #    x, y = Polygon(LinearRing(ref_contour_2_d)).boundary.xy
@@ -318,6 +326,9 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 # also the whole slice is false negative
                 total_false_negative_area = total_false_negative_area + refpolygon.area
                 total_ref_area = total_ref_area + refpolygon.area
+                centroid_point = refpolygon.centroid
+                centroid_point_np = np.array([centroid_point.x, centroid_point.y, z_value])
+                ref_weighted_centroid_sum = ref_weighted_centroid_sum + (refpolygon.area * centroid_point_np)
 
         # we also need to consider the slices for which there is a test contour but no reference
         for z_value, testpolygon in test_polygon_dictionary.items():
@@ -327,10 +338,17 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 # but the whole slice is false positive
                 total_false_positive_area = total_false_positive_area + testpolygon.area
                 total_test_area = total_test_area + testpolygon.area
+                centroid_point = testpolygon.centroid
+                centroid_point_np = np.array([centroid_point.x, centroid_point.y, z_value])
+                test_weighted_centroid_sum = test_weighted_centroid_sum + (testpolygon.area * centroid_point_np)
 
         # now we need to deal with the distance lists to work out the various distance measures
         # NOTE: these are different calculations to those used in plastimatch, and in the challenges
         # my book chapter will explain all...
+
+
+        ref_centroid = ref_weighted_centroid_sum / total_ref_area
+        test_centroid = test_weighted_centroid_sum / total_ref_area
 
         hd = np.max([np.max(distance_ref_to_test), np.max(distance_test_to_ref)])
         ninety_five_hd = np.max([np.percentile(distance_ref_to_test, 95), np.percentile(distance_test_to_ref, 95)])
@@ -343,7 +361,7 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                              total_false_negative_area * slice_thickness,
                              total_false_positive_area * slice_thickness, total_ref_area * slice_thickness,
                              total_test_area * slice_thickness,
-                             hd, ninety_five_hd, ave_dist, median_dist]))
+                             hd, ninety_five_hd, ave_dist, median_dist, ref_centroid, test_centroid]))
 
     return result_list
 
@@ -432,22 +450,26 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
         # scores[3] FP volume
         # scores[4] Ref volume
         # scores[5] Test volume
-        # score [6] Hausdorff
-        # score [7] 95% Hausdorff
-        # score [8] Average Distance
-        # score [9] Median Distance
+        # scores[6] Hausdorff
+        # scores[7] 95% Hausdorff
+        # scores[8] Average Distance
+        # scores[9] Median Distance
+        # scores[10] Reference Centroid
+        # scores[11] Test Centroid
         results_structure = {'Organ': organname, 'APL': scores[0], 'TPVol': scores[1], 'FNVol': scores[2],
                              'FPVol': scores[3], 'SEN': scores[1] / scores[4], 'SFP': scores[3] / scores[5],
                              'three_D_DSC': 2 * scores[1] / (scores[4] + scores[5]), 'HD': scores[6],
-                             'ninety_five_HD': scores[7], 'AD': scores[8], 'MD': scores[9]}
+                             'ninety_five_HD': scores[7], 'AD': scores[8], 'MD': scores[9], 'ref_cent': scores[10],
+                             'test_cent': scores[11]}
         auto_contour_measures.append(results_structure)
 
     if output_filename != '':
         print('Writing results to: ', output_filename)
         with open(output_filename, mode='w', newline='\n', encoding='utf-8') as out_file:
             result_writer = csv.writer(out_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            result_writer.writerow(['Organ', 'APL', 'TP volume', 'FN volume', 'FP volume', 'SEN', '%FP', '3D DSC', '2D HD',
-                                    '95% 2D HD', 'Ave 2D Dist', 'Median 2D Dist'])
+            result_writer.writerow(
+                ['Organ', 'APL', 'TP volume', 'FN volume', 'FP volume', 'SEN', '%FP', '3D DSC', '2D HD',
+                 '95% 2D HD', 'Ave 2D Dist', 'Median 2D Dist', 'Reference Centroid', 'Test Centroid'])
             for results_structure in auto_contour_measures:
                 result_writer.writerow([results_structure['Organ'],
                                         results_structure['APL'],
@@ -460,7 +482,9 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
                                         results_structure['HD'],
                                         results_structure['ninety_five_HD'],
                                         results_structure['AD'],
-                                        results_structure['MD']])
+                                        results_structure['MD'],
+                                        results_structure['ref_cent'],
+                                        results_structure['test_cent']])
     else:
         # TODO function could take list of parameters of measures we want to return.
         return auto_contour_measures
