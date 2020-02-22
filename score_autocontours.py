@@ -4,6 +4,7 @@ from shapely.geometry.polygon import LinearRing
 from shapely.geometry import MultiLineString
 from shapely.ops import shared_paths
 from shapely.ops import cascaded_union
+from shapely.ops import snap
 import numpy as np
 from scipy import stats as spstats
 import polygon_plot
@@ -48,64 +49,92 @@ def get_shared_path_length(boundaryone, boundarytwo, debug=False):
     # This function is to deal with shared_paths only support linestrings
 
     total_shared_path_length = 0
+    total_potential_error = 0
     if isinstance(boundaryone, MultiLineString) & isinstance(boundarytwo, MultiLineString):
         for bit_of_boundaryone in boundaryone:
             for bit_of_boundarytwo in boundarytwo:
+                # funny shapes can cause a topology exception
+                # try again with simplified shapes
+                bob1 = bit_of_boundaryone.simplify(0.01, preserve_topology=False)
+                bob2 = bit_of_boundarytwo.simplify(0.01, preserve_topology=False)
+                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
                 try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(bit_of_boundaryone,
-                                                                                       bit_of_boundarytwo).length
+                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
                 except:
-                    # funny shapes can cause a topology exception
-                    # try again with simplified shapes
+                    bob1 = bob1.simplify(0.1, preserve_topology=False)
+                    bob2 = bob2.simplify(0.1, preserve_topology=False)
+                    bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
                     try:
-                        total_shared_path_length = total_shared_path_length + shared_paths(
-                            bit_of_boundaryone.simplify(0.005, preserve_topology=False),
-                            bit_of_boundarytwo.simplify(0.005, preserve_topology=False)).length
+                        total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
                     except:
                         print('Couldn\'t find shared path for element. Skipping')
+                        print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
+                        total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
     elif isinstance(boundaryone, MultiLineString):
         for bit_of_boundaryone in boundaryone:
+            # funny shapes can cause a topology exception
+            # try again with simplified shapes
+            bob1 = bit_of_boundaryone.simplify(0.01, preserve_topology=False)
+            bob2 = boundarytwo.simplify(0.01, preserve_topology=False)
+            bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
             try:
-                total_shared_path_length = total_shared_path_length + shared_paths(bit_of_boundaryone,
-                                                                                   boundarytwo).length
+                total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
             except:
-                # funny shapes can cause a topology exception
-                # Explicitly catching the TopologicalError also seems to cause an issue
-                # try again with simplified shapes
+                bob1 = bob1.simplify(0.1, preserve_topology=False)
+                bob2 = bob2.simplify(0.1, preserve_topology=False)
+                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
                 try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(
-                        bit_of_boundaryone.simplify(0.05, preserve_topology=False),
-                        boundarytwo.simplify(0.05, preserve_topology=False)).length
+                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
                 except:
                     print('Couldn\'t find shared path for element. Skipping')
+                    print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
+                    total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
     elif isinstance(boundarytwo, MultiLineString):
         for bit_of_boundarytwo in boundarytwo:
+            # funny shapes can cause a topology exception
+            # try again with simplified shapes
+            bob1 = boundaryone.simplify(0.01, preserve_topology=False)
+            bob2 = bit_of_boundarytwo.simplify(0.01, preserve_topology=False)
+            bob1 = snap(bob1, bob2, 0.1)   # 1/10th of a millimetre is an aggressive snap, but wont change APL much
             try:
-                total_shared_path_length = total_shared_path_length + shared_paths(boundaryone,
-                                                                                   bit_of_boundarytwo).length
-            except Exception as e:
-                # funny shapes can cause a topology exception
-                # try again with simplified shapes
+                total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
+            except:
+                bob1 = bob1.simplify(0.1, preserve_topology=False)
+                bob2 = bob2.simplify(0.1, preserve_topology=False)
+                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
                 try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(
-                        boundaryone.simplify(0.05, preserve_topology=False),
-                        bit_of_boundarytwo.simplify(0.05, preserve_topology=False)).length
-                except Exception as e:
-                    print('Could find shared path for element. Skipping')
+                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
+                except:
+                    print('Couldn\'t find shared path for element. Skipping')
+                    print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
+                    total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
     else:
         if debug:
             polygon_plot.plot_polygons_and_linestrings(boundaryone, '#ff0000')
             polygon_plot.plot_polygons_and_linestrings(boundarytwo, '#00ff00')
+        bob1 = boundaryone.simplify(0.01, preserve_topology=False)
+        bob2 = boundarytwo.simplify(0.01, preserve_topology=False)
+        bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
         try:
-            total_shared_path_length = shared_paths(boundaryone, boundarytwo).length
+            total_shared_path_length = shared_paths(bob1, bob2).length
         except Exception as e:
             # funny shapes can cause a topology exception
             # try again with simplified shapes
             try:
-                total_shared_path_length = shared_paths(boundaryone.simplify(0.05, preserve_topology=False),
-                                                        boundarytwo.simplify(0.05, preserve_topology=False)).length
-            except Exception as e:
-                print('Could find shared path for element. Skipping')
+                total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
+            except:
+                bob1 = boundaryone.simplify(0.1, preserve_topology=False)
+                bob2 = boundarytwo.simplify(0.1, preserve_topology=False)
+                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
+                try:
+                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
+                except:
+                    print('Couldn\'t find shared path for element. Skipping')
+                    print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
+                    total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
+
+    if total_potential_error > 0:
+        print('Total potential error for structure: ' + str(total_potential_error))
 
     return total_shared_path_length
 
