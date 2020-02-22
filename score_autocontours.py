@@ -55,9 +55,9 @@ def get_shared_path_length(boundaryone, boundarytwo, debug=False):
             for bit_of_boundarytwo in boundarytwo:
                 # funny shapes can cause a topology exception
                 # try again with simplified shapes
-                bob1 = bit_of_boundaryone.simplify(0.01, preserve_topology=False)
-                bob2 = bit_of_boundarytwo.simplify(0.01, preserve_topology=False)
-                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
+                bob1 = bit_of_boundaryone.simplify(0.001, preserve_topology=False)
+                bob2 = bit_of_boundarytwo.simplify(0.001, preserve_topology=False)
+                bob1 = snap(bob1, bob2, 0.01)
                 try:
                     total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
                 except:
@@ -74,9 +74,9 @@ def get_shared_path_length(boundaryone, boundarytwo, debug=False):
         for bit_of_boundaryone in boundaryone:
             # funny shapes can cause a topology exception
             # try again with simplified shapes
-            bob1 = bit_of_boundaryone.simplify(0.01, preserve_topology=False)
-            bob2 = boundarytwo.simplify(0.01, preserve_topology=False)
-            bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
+            bob1 = bit_of_boundaryone.simplify(0.001, preserve_topology=False)
+            bob2 = boundarytwo.simplify(0.001, preserve_topology=False)
+            bob1 = snap(bob1, bob2, 0.01)
             try:
                 total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
             except:
@@ -93,9 +93,9 @@ def get_shared_path_length(boundaryone, boundarytwo, debug=False):
         for bit_of_boundarytwo in boundarytwo:
             # funny shapes can cause a topology exception
             # try again with simplified shapes
-            bob1 = boundaryone.simplify(0.01, preserve_topology=False)
-            bob2 = bit_of_boundarytwo.simplify(0.01, preserve_topology=False)
-            bob1 = snap(bob1, bob2, 0.1)   # 1/10th of a millimetre is an aggressive snap, but wont change APL much
+            bob1 = boundaryone.simplify(0.001, preserve_topology=False)
+            bob2 = bit_of_boundarytwo.simplify(0.001, preserve_topology=False)
+            bob1 = snap(bob1, bob2, 0.01)
             try:
                 total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
             except:
@@ -112,9 +112,9 @@ def get_shared_path_length(boundaryone, boundarytwo, debug=False):
         if debug:
             polygon_plot.plot_polygons_and_linestrings(boundaryone, '#ff0000')
             polygon_plot.plot_polygons_and_linestrings(boundarytwo, '#00ff00')
-        bob1 = boundaryone.simplify(0.01, preserve_topology=False)
-        bob2 = boundarytwo.simplify(0.01, preserve_topology=False)
-        bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
+        bob1 = boundaryone.simplify(0.001, preserve_topology=False)
+        bob2 = boundarytwo.simplify(0.001, preserve_topology=False)
+        bob1 = snap(bob1, bob2, 0.01)
         try:
             total_shared_path_length = shared_paths(bob1, bob2).length
         except Exception as e:
@@ -467,7 +467,7 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
                 # TODO compare to each and report for all?
                 print('\tMultiple matches for structure: {:s}\n\tSkipping structure'.format(ref_name))
 
-    resultlist = find_and_score_slice_matches(ground_truth_data, test_data, slice_thickness, contour_matches, 2)
+    resultlist = find_and_score_slice_matches(ground_truth_data, test_data, slice_thickness, contour_matches, 1)
 
     auto_contour_measures = []
 
