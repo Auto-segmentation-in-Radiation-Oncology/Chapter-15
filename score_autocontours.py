@@ -1,10 +1,8 @@
 import pydicom
 from shapely.geometry import Polygon
 from shapely.geometry.polygon import LinearRing
-from shapely.geometry import MultiLineString
-from shapely.ops import shared_paths
 from shapely.ops import cascaded_union
-from shapely.ops import snap
+from shapely.ops import split
 import numpy as np
 from scipy import stats as spstats
 import polygon_plot
@@ -45,99 +43,44 @@ def get_distance_measures(ref_poly, test_poly, stepsize=1.0, warningsize=1.0):
     return distance_ref_to_test, distance_test_to_ref
 
 
-def get_shared_path_length(boundaryone, boundarytwo, debug=False):
-    # This function is to deal with shared_paths only support linestrings
+def get_added_path_length(ref_poly, contracted_poly, expanded_poly, debug=False):
 
-    total_shared_path_length = 0
-    total_potential_error = 0
-    if isinstance(boundaryone, MultiLineString) & isinstance(boundarytwo, MultiLineString):
-        for bit_of_boundaryone in boundaryone:
-            for bit_of_boundarytwo in boundarytwo:
-                # funny shapes can cause a topology exception
-                # try again with simplified shapes
-                bob1 = bit_of_boundaryone.simplify(0.001, preserve_topology=False)
-                bob2 = bit_of_boundarytwo.simplify(0.001, preserve_topology=False)
-                bob1 = snap(bob1, bob2, 0.01)
-                try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-                except:
-                    bob1 = bob1.simplify(0.1, preserve_topology=False)
-                    bob2 = bob2.simplify(0.1, preserve_topology=False)
-                    bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
-                    try:
-                        total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-                    except:
-                        print('Couldn\'t find shared path for element. Skipping')
-                        print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
-                        total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
-    elif isinstance(boundaryone, MultiLineString):
-        for bit_of_boundaryone in boundaryone:
-            # funny shapes can cause a topology exception
-            # try again with simplified shapes
-            bob1 = bit_of_boundaryone.simplify(0.001, preserve_topology=False)
-            bob2 = boundarytwo.simplify(0.001, preserve_topology=False)
-            bob1 = snap(bob1, bob2, 0.01)
-            try:
-                total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-            except:
-                bob1 = bob1.simplify(0.1, preserve_topology=False)
-                bob2 = bob2.simplify(0.1, preserve_topology=False)
-                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
-                try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-                except:
-                    print('Couldn\'t find shared path for element. Skipping')
-                    print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
-                    total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
-    elif isinstance(boundarytwo, MultiLineString):
-        for bit_of_boundarytwo in boundarytwo:
-            # funny shapes can cause a topology exception
-            # try again with simplified shapes
-            bob1 = boundaryone.simplify(0.001, preserve_topology=False)
-            bob2 = bit_of_boundarytwo.simplify(0.001, preserve_topology=False)
-            bob1 = snap(bob1, bob2, 0.01)
-            try:
-                total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-            except:
-                bob1 = bob1.simplify(0.1, preserve_topology=False)
-                bob2 = bob2.simplify(0.1, preserve_topology=False)
-                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
-                try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-                except:
-                    print('Couldn\'t find shared path for element. Skipping')
-                    print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
-                    total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
-    else:
-        if debug:
-            polygon_plot.plot_polygons_and_linestrings(boundaryone, '#ff0000')
-            polygon_plot.plot_polygons_and_linestrings(boundarytwo, '#00ff00')
-        bob1 = boundaryone.simplify(0.001, preserve_topology=False)
-        bob2 = boundarytwo.simplify(0.001, preserve_topology=False)
-        bob1 = snap(bob1, bob2, 0.01)
-        try:
-            total_shared_path_length = shared_paths(bob1, bob2).length
-        except Exception as e:
-            # funny shapes can cause a topology exception
-            # try again with simplified shapes
-            try:
-                total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-            except:
-                bob1 = boundaryone.simplify(0.1, preserve_topology=False)
-                bob2 = boundarytwo.simplify(0.1, preserve_topology=False)
-                bob1 = snap(bob1, bob2, 0.1)  # 1/10th of a millimetre is an aggressive snap, but wont change APL much
-                try:
-                    total_shared_path_length = total_shared_path_length + shared_paths(bob1, bob2).length
-                except:
-                    print('Couldn\'t find shared path for element. Skipping')
-                    print('Maximum error: ' + str(min(bob1.length, bob2.length)/2))
-                    total_potential_error = total_potential_error + min(bob1.length, bob2.length)/2
+    total_path_length = 0
 
-    if total_potential_error > 0:
-        print('Total potential error for structure: ' + str(total_potential_error))
+    reference_boundary = ref_poly.boundary
+    contracted_boundary = contracted_poly.boundary
+    expanded_boundary = expanded_poly.boundary
 
-    return total_shared_path_length
+    if debug:
+        polygon_plot.plot_polygons_and_linestrings(reference_boundary, '#000000')
+        polygon_plot.plot_polygons_and_linestrings(contracted_boundary, '#0000ff')
+        polygon_plot.plot_polygons_and_linestrings(expanded_boundary, '#0000ff')
 
+    ref_split_inside = split(reference_boundary, contracted_boundary)
+    for linesegment in ref_split_inside:
+        # check it the centre of the line is within the contracted polygon
+        mid_point = linesegment.interpolate(0.5, True)
+        if contracted_poly.contains(mid_point):
+            total_path_length = total_path_length + linesegment.length
+            if debug:
+                polygon_plot.plot_polygons_and_linestrings(linesegment, '#00ff00')
+        else:
+            if debug:
+                polygon_plot.plot_polygons_and_linestrings(linesegment, '#ff0000')
+
+    ref_split_outside = split(reference_boundary, expanded_boundary)
+    for linesegment in ref_split_outside:
+        # check it the centre of the line is outside the expanded polygon
+        mid_point = linesegment.interpolate(0.5, True)
+        if not expanded_poly.contains(mid_point):
+            total_path_length = total_path_length + linesegment.length
+            if debug:
+                polygon_plot.plot_polygons_and_linestrings(linesegment, '#00ff00')
+        else:
+            if debug:
+                polygon_plot.plot_polygons_and_linestrings(linesegment, '#ff0000')
+
+    return total_path_length
 
 def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_matches, tolerance=1):
     result_list = []
@@ -333,19 +276,9 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 #    plt.plot(x, y, color='#0000ff')
 
                 # add length of remain contours
-                if inside.is_empty:
-                    inside_length = 0
-                else:
-                    inside_length = inside.length - get_shared_path_length(inside.boundary, contracted_poly.boundary)
-                    # shared_paths(inside.boundary, contracted_poly.boundary).length
 
-                if outside.is_empty:
-                    outside_length = 0
-                else:
-                    outside_length = outside.length - get_shared_path_length(outside.boundary,
-                                                                             expanded_poly.boundary, debug)
-
-                total_added_path_length = total_added_path_length + outside_length + inside_length
+                added_path = get_added_path_length(refpolygon, contracted_poly, expanded_poly)
+                total_added_path_length = total_added_path_length + added_path
 
             else:
                 # if no corresponding slice, then add the whole ref length
@@ -372,9 +305,7 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 test_weighted_centroid_sum = test_weighted_centroid_sum + (testpolygon.area * centroid_point_np)
 
         # now we need to deal with the distance lists to work out the various distance measures
-        # NOTE: these are different calculations to those used in plastimatch, and in the challenges
-        # my book chapter will explain all...
-
+        # NOTE: these are different calculations to those used in plastimatch. The book chapter will explain all...
 
         ref_centroid = ref_weighted_centroid_sum / total_ref_area
         test_centroid = test_weighted_centroid_sum / total_ref_area
