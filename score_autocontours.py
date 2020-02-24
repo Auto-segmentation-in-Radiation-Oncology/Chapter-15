@@ -48,39 +48,45 @@ def get_added_path_length(ref_poly, contracted_poly, expanded_poly, debug=False)
     total_path_length = 0
 
     reference_boundary = ref_poly.boundary
-    contracted_boundary = contracted_poly.boundary
+    if contracted_poly.area > 0:
+        contracted_boundary = contracted_poly.boundary
+    else:
+        contracted_boundary = None
     expanded_boundary = expanded_poly.boundary
 
     if debug:
         polygon_plot.plot_polygons_and_linestrings(reference_boundary, '#000000')
-        polygon_plot.plot_polygons_and_linestrings(contracted_boundary, '#0000ff')
+        if contracted_boundary is not None:
+            polygon_plot.plot_polygons_and_linestrings(contracted_boundary, '#0000ff')
         polygon_plot.plot_polygons_and_linestrings(expanded_boundary, '#0000ff')
 
-    ref_split_inside = split(reference_boundary, contracted_boundary)
-    for linesegment in ref_split_inside:
-        # check it the centre of the line is within the contracted polygon
-        mid_point = linesegment.interpolate(0.5, True)
-        if contracted_poly.contains(mid_point):
-            total_path_length = total_path_length + linesegment.length
-            if debug:
-                polygon_plot.plot_polygons_and_linestrings(linesegment, '#00ff00')
-        else:
-            if debug:
-                polygon_plot.plot_polygons_and_linestrings(linesegment, '#ff0000')
+    if contracted_boundary is not None:
+        ref_split_inside = split(reference_boundary, contracted_boundary)
+        for line_segment in ref_split_inside:
+            # check it the centre of the line is within the contracted polygon
+            mid_point = line_segment.interpolate(0.5, True)
+            if contracted_poly.contains(mid_point):
+                total_path_length = total_path_length + line_segment.length
+                if debug:
+                    polygon_plot.plot_polygons_and_linestrings(line_segment, '#00ff00')
+            else:
+                if debug:
+                    polygon_plot.plot_polygons_and_linestrings(line_segment, '#ff0000')
 
     ref_split_outside = split(reference_boundary, expanded_boundary)
-    for linesegment in ref_split_outside:
+    for line_segment in ref_split_outside:
         # check it the centre of the line is outside the expanded polygon
-        mid_point = linesegment.interpolate(0.5, True)
+        mid_point = line_segment.interpolate(0.5, True)
         if not expanded_poly.contains(mid_point):
-            total_path_length = total_path_length + linesegment.length
+            total_path_length = total_path_length + line_segment.length
             if debug:
-                polygon_plot.plot_polygons_and_linestrings(linesegment, '#00ff00')
+                polygon_plot.plot_polygons_and_linestrings(line_segment, '#00ff00')
         else:
             if debug:
-                polygon_plot.plot_polygons_and_linestrings(linesegment, '#ff0000')
+                polygon_plot.plot_polygons_and_linestrings(line_segment, '#ff0000')
 
     return total_path_length
+
 
 def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_matches, tolerance=1):
     result_list = []
@@ -108,6 +114,9 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 break
         print('Computing scores for: ', structure_name)
 
+        ref_contour_set = None
+        test_contour_set = None
+
         # Find contour set for reference and test
         for contour_set in ref_rtss.ROIContourSequence:
             if contour_set.ReferencedROINumber == ref_id:
@@ -118,56 +127,59 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 test_contour_set = contour_set
                 break
 
-        ref_z_slices = []
-        # get the list of z-values for the reference set
-        for ref_contour_slice in ref_contour_set.ContourSequence:
-            n_ref_pts = int(ref_contour_slice.NumberOfContourPoints)
-            if n_ref_pts >= 4:
-                ref_contour = ref_contour_slice.ContourData
-                ref_z_slices.append(ref_contour[2])
-        # round to 1 decimal place (0.1mm) to make finding a match more robust
-        ref_z_slices = np.round(ref_z_slices, 1)
-        ref_z_slices = np.unique(ref_z_slices)
-
         ref_polygon_dictionary = {}
-        # now build the multi-polygon for each z-slice
-        for z_value in ref_z_slices:
-            contour_count = 0
+        test_polygon_dictionary = {}
+        ref_z_slices = []
+        test_z_slices = []
+
+        if ref_contour_set is not None:
+            # get the list of z-values for the reference set
             for ref_contour_slice in ref_contour_set.ContourSequence:
                 n_ref_pts = int(ref_contour_slice.NumberOfContourPoints)
                 if n_ref_pts >= 4:
                     ref_contour = ref_contour_slice.ContourData
-                    if np.round(ref_contour[2], 1) == z_value:
-                        contour_count = contour_count + 1
-                        # make 2D contours
-                        ref_contour_2_d = np.zeros((n_ref_pts, 2))
-                        for i in range(0, n_ref_pts):
-                            ref_contour_2_d[i][0] = float(ref_contour[i * 3])
-                            ref_contour_2_d[i][1] = float(ref_contour[i * 3 + 1])
-                        if contour_count == 1:
-                            # Make points into Polygon
-                            ref_polygon = Polygon(LinearRing(ref_contour_2_d))
-                        else:
-                            # Turn next set of points into a Polygon
-                            this_ref_polygon = Polygon(LinearRing(ref_contour_2_d))
-                            # Attempt to fix any self-intersections in the resulting polygon
-                            if not this_ref_polygon.is_valid:
-                                this_ref_polygon = this_ref_polygon.buffer(0)
-                            if ref_polygon.contains(this_ref_polygon):
-                                # if the new polygon is inside the old one, chop it out
-                                ref_polygon = ref_polygon.difference(this_ref_polygon)
-                            elif ref_polygon.within(this_ref_polygon):
-                                # if the new and vice versa
-                                ref_polygon = this_ref_polygon.difference(ref_polygon)
-                            else:
-                                # otherwise it is a floating blob to add
-                                ref_polygon = ref_polygon.union(this_ref_polygon)
-                        # Attempt to fix any self-intersections in the resulting polygon
-                        if not ref_polygon.is_valid:
-                            ref_polygon = ref_polygon.buffer(0)
-            ref_polygon_dictionary[z_value] = ref_polygon
+                    ref_z_slices.append(ref_contour[2])
+            # round to 1 decimal place (0.1mm) to make finding a match more robust
+            ref_z_slices = np.round(ref_z_slices, 1)
+            ref_z_slices = np.unique(ref_z_slices)
 
-        test_z_slices = []
+            # now build the multi-polygon for each z-slice
+            for z_value in ref_z_slices:
+                ref_polygon = None
+                for ref_contour_slice in ref_contour_set.ContourSequence:
+                    n_ref_pts = int(ref_contour_slice.NumberOfContourPoints)
+                    if n_ref_pts >= 4:
+                        ref_contour = ref_contour_slice.ContourData
+                        if np.round(ref_contour[2], 1) == z_value:
+                            # make 2D contours
+                            ref_contour_2_d = np.zeros((n_ref_pts, 2))
+                            for i in range(0, n_ref_pts):
+                                ref_contour_2_d[i][0] = float(ref_contour[i * 3])
+                                ref_contour_2_d[i][1] = float(ref_contour[i * 3 + 1])
+                            if ref_polygon is None:
+                                # Make points into Polygon
+                                ref_polygon = Polygon(LinearRing(ref_contour_2_d))
+                            else:
+                                # Turn next set of points into a Polygon
+                                this_ref_polygon = Polygon(LinearRing(ref_contour_2_d))
+                                # Attempt to fix any self-intersections in the resulting polygon
+                                if not this_ref_polygon.is_valid:
+                                    this_ref_polygon = this_ref_polygon.buffer(0)
+                                if ref_polygon.contains(this_ref_polygon):
+                                    # if the new polygon is inside the old one, chop it out
+                                    ref_polygon = ref_polygon.difference(this_ref_polygon)
+                                elif ref_polygon.within(this_ref_polygon):
+                                    # if the new and vice versa
+                                    ref_polygon = this_ref_polygon.difference(ref_polygon)
+                                else:
+                                    # otherwise it is a floating blob to add
+                                    ref_polygon = ref_polygon.union(this_ref_polygon)
+                            # Attempt to fix any self-intersections in the resulting polygon
+                            if ref_polygon is not None:
+                                if not ref_polygon.is_valid:
+                                    ref_polygon = ref_polygon.buffer(0)
+                ref_polygon_dictionary[z_value] = ref_polygon
+
         # get the list of z-values for the reference set
         for test_contour_slice in test_contour_set.ContourSequence:
             n_test_pts = int(test_contour_slice.NumberOfContourPoints)
@@ -177,49 +189,47 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
         test_z_slices = np.round(test_z_slices, 1)
         test_z_slices = np.unique(test_z_slices)
 
-        test_polygon_dictionary = {}
-        # now build the multi-polygon for each z-slice
-        for z_value in test_z_slices:
-            contour_count = 0
-            for test_contour_slice in test_contour_set.ContourSequence:
-                n_test_pts = int(test_contour_slice.NumberOfContourPoints)
-                if n_test_pts >= 4:
-                    test_contour = test_contour_slice.ContourData
-                    if np.round(test_contour[2], 1) == z_value:
-                        contour_count = contour_count + 1
-                        # make 2D contours
-                        test_contour_2_d = np.zeros((n_test_pts, 2))
-                        for i in range(0, n_test_pts):
-                            test_contour_2_d[i][0] = float(test_contour[i * 3])
-                            test_contour_2_d[i][1] = float(test_contour[i * 3 + 1])
+        if test_contour_set is not None:
+            # now build the multi-polygon for each z-slice
+            for z_value in test_z_slices:
+                test_polygon = None
+                for test_contour_slice in test_contour_set.ContourSequence:
+                    n_test_pts = int(test_contour_slice.NumberOfContourPoints)
+                    if n_test_pts >= 4:
+                        test_contour = test_contour_slice.ContourData
+                        if np.round(test_contour[2], 1) == z_value:
+                            # make 2D contours
+                            test_contour_2_d = np.zeros((n_test_pts, 2))
+                            for i in range(0, n_test_pts):
+                                test_contour_2_d[i][0] = float(test_contour[i * 3])
+                                test_contour_2_d[i][1] = float(test_contour[i * 3 + 1])
 
-                        if contour_count == 1:
-                            # Make points into Polygon
-                            test_polygon = Polygon(LinearRing(test_contour_2_d))
-                        else:
-                            # Turn next set of points into a Polygon
-                            this_test_polygon = Polygon(LinearRing(test_contour_2_d))
-                            # Attempt to fix any self-intersections
-                            if not this_test_polygon.is_valid:
-                                this_test_polygon = this_test_polygon.buffer(0)
-                            if test_polygon.contains(this_test_polygon):
-                                # if the new polygon is inside the old one, chop it out
-                                test_polygon = test_polygon.difference(this_test_polygon)
-                            elif test_polygon.within(this_test_polygon):
-                                # if the new and vice versa
-                                test_polygon = this_test_polygon.difference(test_polygon)
+                            if test_polygon is None:
+                                # Make points into Polygon
+                                test_polygon = Polygon(LinearRing(test_contour_2_d))
                             else:
-                                # otherwise it is a floating blob to add
-                                test_polygon = test_polygon.union(this_test_polygon)
+                                # Turn next set of points into a Polygon
+                                this_test_polygon = Polygon(LinearRing(test_contour_2_d))
+                                # Attempt to fix any self-intersections
+                                if not this_test_polygon.is_valid:
+                                    this_test_polygon = this_test_polygon.buffer(0)
+                                if test_polygon.contains(this_test_polygon):
+                                    # if the new polygon is inside the old one, chop it out
+                                    test_polygon = test_polygon.difference(this_test_polygon)
+                                elif test_polygon.within(this_test_polygon):
+                                    # if the new and vice versa
+                                    test_polygon = this_test_polygon.difference(test_polygon)
+                                else:
+                                    # otherwise it is a floating blob to add
+                                    test_polygon = test_polygon.union(this_test_polygon)
 
-                        # Attempt to fix any self-intersections in the resulting polygon
-                        if not test_polygon.is_valid:
-                            test_polygon = test_polygon.buffer(0)
-            test_polygon_dictionary[z_value] = test_polygon
+                            # Attempt to fix any self-intersections in the resulting polygon
+                            if not test_polygon.is_valid:
+                                test_polygon = test_polygon.buffer(0)
+                test_polygon_dictionary[z_value] = test_polygon
 
         # for each slice in ref find corresponding slice in test
         for z_value, refpolygon in ref_polygon_dictionary.items():
-
             if z_value in test_z_slices:
                 testpolygon = test_polygon_dictionary[z_value]
 
@@ -246,10 +256,6 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 if debug:
                     polygon_plot.plot_polygons_and_linestrings(expanded_poly, '#ff0000')
                     polygon_plot.plot_polygons_and_linestrings(contracted_poly, '#ff0000')
-
-                # delete from ref, leaving open contours
-                inside = refpolygon.intersection(contracted_poly)
-                outside = refpolygon.difference(expanded_poly)
 
                 # add intersection of contours
                 contour_intersection = refpolygon.intersection(testpolygon)
@@ -295,7 +301,6 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
         # we also need to consider the slices for which there is a test contour but no reference
         for z_value, testpolygon in test_polygon_dictionary.items():
             if z_value not in ref_z_slices:
-                testpolygon = Polygon(LinearRing(test_contour_2_d))
                 # path length doesn't get updated
                 # but the whole slice is false positive
                 total_false_positive_area = total_false_positive_area + testpolygon.area
@@ -348,7 +353,7 @@ def estimate_slice_thickness(contour_data_set):
         old_z_val = z_val
         z_diff_list.append(z_diff)
 
-    slice_thickness = spstats.mode(z_diff_list).mode[0]
+    slice_thickness = spstats.mode(z_diff_list)[0][0]
 
     print('slice thickness: ', slice_thickness)
 
@@ -369,6 +374,7 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
 
         ref_name = ref_roi.ROIName
         ref_id = ref_roi.ROINumber
+        ref_contour_set = None
 
         # Find contour set for reference
         for contour_set in ground_truth_data.ROIContourSequence:
@@ -378,25 +384,26 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
 
         # Don't bother checking for a match if the reference is empty
         # TODO could also check for 0 length or 0 volume, but that is more effort
-        if hasattr(ref_contour_set, 'ContourSequence'):
-            number_of_matches = 0
-            print('Checking structure: {:s}'.format(ref_name))
+        if ref_contour_set is not None:
+            if hasattr(ref_contour_set, 'ContourSequence'):
+                number_of_matches = 0
+                print('Checking structure: {:s}'.format(ref_name))
 
-            last_match_id = -1
-            for test_roi in test_data.StructureSetROISequence:
-                test_name = test_roi.ROIName
+                last_match_id = -1
+                for test_roi in test_data.StructureSetROISequence:
+                    test_name = test_roi.ROIName
 
-                if test_name == ref_name:
-                    number_of_matches = number_of_matches + 1
-                    last_match_id = test_roi.ROINumber
+                    if test_name == ref_name:
+                        number_of_matches = number_of_matches + 1
+                        last_match_id = test_roi.ROINumber
 
-            if number_of_matches == 1:
-                contour_matches.append((ref_id, last_match_id))
-            elif number_of_matches == 0:
-                print('\tNo match for structure: {:s}\n\tSkipping structure'.format(ref_name))
-            elif number_of_matches > 1:
-                # TODO compare to each and report for all?
-                print('\tMultiple matches for structure: {:s}\n\tSkipping structure'.format(ref_name))
+                if number_of_matches == 1:
+                    contour_matches.append((ref_id, last_match_id))
+                elif number_of_matches == 0:
+                    print('\tNo match for structure: {:s}\n\tSkipping structure'.format(ref_name))
+                elif number_of_matches > 1:
+                    # TODO compare to each and report for all?
+                    print('\tMultiple matches for structure: {:s}\n\tSkipping structure'.format(ref_name))
 
     resultlist = find_and_score_slice_matches(ground_truth_data, test_data, slice_thickness, contour_matches, 1)
 
@@ -457,13 +464,14 @@ def main():
     # TODO Add a parse for arguments
 
     # ground_truth_file = 'C:/Mark/Book/Scoring code/TruthContours.dcm'
-    # ground_truth_file = 'C:/Mark/Book/AAPMChallenge2018/Data/LCTSC/Train/LCTSC-Train-S1-001.dcm'
-    # ground_truth_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\LCTSC-Test-S2-101\\APLtestGT/IM1.dcm'
-    ground_truth_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Consensus\\Contoured by Research HN Consensus Atlas All\\IM1.DCM'
+    # ground_truth_file = 'C:\\Mark\Book\\Scoring code\\TestCases\\LCTSC-Test-S1-102\\Reference\\IM1.dcm'
+    # ground_truth_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Artificial contours\\APLtestGT/IM1.dcm'
+    ground_truth_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Consensus\\' \
+                        'Contoured by Research HN Consensus Atlas All\\IM1.DCM'
     # ground_truth_file = 'C:\Mark\Book\Scoring code\Full.DCM'
     # test_file = 'C:/Mark/Book/Scoring code/TestContours.dcm'
-    # test_file = 'C:/Mark/Book/AAPMChallenge2018/Manual Contours/Mark/LCTSC-Train-S1-001.dcm'
-    # test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\LCTSC-Test-S2-101\\APLtestTest/IM1.dcm'
+    # test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\LCTSC-Test-S1-102\\Test\\IM1.dcm'
+    # test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Artificial contours\\APLtestTest/IM1.dcm'
     test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Consensus\\DLCWithBrain\\IM1.DCM'
     # test_file = 'C:\Mark\Book\Scoring code\Single.DCM'
     output_file = 'C:/Mark/Book/Scoring code/Results.csv'
