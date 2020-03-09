@@ -313,7 +313,7 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
         # NOTE: these are different calculations to those used in plastimatch. The book chapter will explain all...
 
         ref_centroid = ref_weighted_centroid_sum / total_ref_area
-        test_centroid = test_weighted_centroid_sum / total_ref_area
+        test_centroid = test_weighted_centroid_sum / total_test_area
 
         hd = np.max([np.max(distance_ref_to_test), np.max(distance_test_to_ref)])
         ninety_five_hd = np.max([np.percentile(distance_ref_to_test, 95), np.percentile(distance_test_to_ref, 95)])
