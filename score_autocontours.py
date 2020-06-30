@@ -315,10 +315,17 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
         ref_centroid = ref_weighted_centroid_sum / total_ref_area
         test_centroid = test_weighted_centroid_sum / total_test_area
 
-        hd = np.max([np.max(distance_ref_to_test), np.max(distance_test_to_ref)])
-        ninety_five_hd = np.max([np.percentile(distance_ref_to_test, 95), np.percentile(distance_test_to_ref, 95)])
-        ave_dist = (np.mean(distance_ref_to_test) + np.mean(distance_test_to_ref)) / 2
-        median_dist = (np.median(distance_ref_to_test) + np.median(distance_test_to_ref)) / 2
+        if distance_ref_to_test == [] and distance_test_to_ref == []:
+            print('Contours are not on the same slices!')
+            hd = float('nan')
+            ninety_five_hd = float('nan')
+            ave_dist = float('nan')
+            median_dist = float('nan')
+        else:
+            hd = np.max([np.max(distance_ref_to_test), np.max(distance_test_to_ref)])
+            ninety_five_hd = np.max([np.percentile(distance_ref_to_test, 95), np.percentile(distance_test_to_ref, 95)])
+            ave_dist = (np.mean(distance_ref_to_test) + np.mean(distance_test_to_ref)) / 2
+            median_dist = (np.median(distance_ref_to_test) + np.median(distance_test_to_ref)) / 2
 
         # print('added path length = ', total_added_path_length)
         result_list.append((structure_name,
