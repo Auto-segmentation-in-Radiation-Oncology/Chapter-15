@@ -5,13 +5,10 @@ from shapely.ops import cascaded_union
 from shapely.ops import split
 import numpy as np
 from scipy import stats as spstats
-import polygon_plot
+# import polygon_plot
 import csv
-
-
-# https://stackoverflow.com/questions/56965268/how-do-i-convert-a-3d-point-cloud-ply-into-a-mesh-with-faces-and-vertices
-
-############################################################################################
+import random
+import json
 
 
 def get_distance_measures(ref_poly, test_poly, stepsize=1.0, warningsize=1.0):
@@ -45,7 +42,7 @@ def get_distance_measures(ref_poly, test_poly, stepsize=1.0, warningsize=1.0):
 
 def get_added_path_length(ref_poly, contracted_poly, expanded_poly, debug=False):
 
-    total_path_length = 0
+    added_path_length = 0
 
     reference_boundary = ref_poly.boundary
     if contracted_poly.area > 0:
@@ -54,41 +51,73 @@ def get_added_path_length(ref_poly, contracted_poly, expanded_poly, debug=False)
         contracted_boundary = None
     expanded_boundary = expanded_poly.boundary
 
-    if debug:
-        polygon_plot.plot_polygons_and_linestrings(reference_boundary, '#000000')
-        if contracted_boundary is not None:
-            polygon_plot.plot_polygons_and_linestrings(contracted_boundary, '#0000ff')
-        polygon_plot.plot_polygons_and_linestrings(expanded_boundary, '#0000ff')
+    # if debug:
+    #     polygon_plot.plot_polygons_and_linestrings(reference_boundary, '#000000')
+    #     if contracted_boundary is not None:
+    #         polygon_plot.plot_polygons_and_linestrings(contracted_boundary, '#0000ff')
+    #     polygon_plot.plot_polygons_and_linestrings(expanded_boundary, '#0000ff')
 
     if contracted_boundary is not None:
-        ref_split_inside = split(reference_boundary, contracted_boundary)
-        for line_segment in ref_split_inside:
-            # check it the centre of the line is within the contracted polygon
-            mid_point = line_segment.interpolate(0.5, True)
-            if contracted_poly.contains(mid_point):
-                total_path_length = total_path_length + line_segment.length
-                if debug:
-                    polygon_plot.plot_polygons_and_linestrings(line_segment, '#00ff00')
-            else:
-                if debug:
-                    polygon_plot.plot_polygons_and_linestrings(line_segment, '#ff0000')
+        split_success = False
+        split_attempts = 0
+        while (not split_success) & (split_attempts < 5):
+            try:
+                ref_split_inside = split(reference_boundary, contracted_boundary)
+                split_success = True
+            except ValueError:
+                # Error can occur if sections parallel. Try a small jitter?
+                contracted_poly_new = cascaded_union(contracted_poly.buffer(random.random() * 0.0001, 32, 1, 1))
+                contracted_boundary = contracted_poly_new.boundary
+                split_attempts = split_attempts + 1
 
-    ref_split_outside = split(reference_boundary, expanded_boundary)
-    for line_segment in ref_split_outside:
-        # check it the centre of the line is outside the expanded polygon
-        mid_point = line_segment.interpolate(0.5, True)
-        if not expanded_poly.contains(mid_point):
-            total_path_length = total_path_length + line_segment.length
-            if debug:
-                polygon_plot.plot_polygons_and_linestrings(line_segment, '#00ff00')
+        if split_success:
+            for line_segment in ref_split_inside:
+                # check it the centre of the line is within the contracted polygon
+                mid_point = line_segment.interpolate(0.5, True)
+                if contracted_poly.contains(mid_point):
+                    added_path_length = added_path_length + line_segment.length
+                #     if debug:
+                #         polygon_plot.plot_polygons_and_linestrings(line_segment, '#00ff00')
+                # else:
+                #     if debug:
+                #         polygon_plot.plot_polygons_and_linestrings(line_segment, '#ff0000')
         else:
             if debug:
-                polygon_plot.plot_polygons_and_linestrings(line_segment, '#ff0000')
+                print('Failed to correctly calculate Added Path Length for a slice of an organ', flush=True)
+                # would be nice if we had the information to return here!
 
-    return total_path_length
+    split_success = False
+    split_attempts = 0
+    while (not split_success) & (split_attempts < 5):
+        try:
+            ref_split_outside = split(reference_boundary, expanded_boundary)
+            split_success = True
+        except ValueError:
+            # Error can occur if sections parallel. Try a tiny random jitter
+            expanded_poly_new = cascaded_union(expanded_poly.buffer(random.random() * 0.0001, 32, 1, 1))
+            expanded_boundary = expanded_poly_new.boundary
+            split_attempts = split_attempts + 1
+
+    if split_success:
+        for line_segment in ref_split_outside:
+            # check it the centre of the line is outside the expanded polygon
+            mid_point = line_segment.interpolate(0.5, True)
+            if not expanded_poly.contains(mid_point):
+                added_path_length = added_path_length + line_segment.length
+            #     if debug:
+            #         polygon_plot.plot_polygons_and_linestrings(line_segment, '#00ff00')
+            # else:
+            #     if debug:
+            #         polygon_plot.plot_polygons_and_linestrings(line_segment, '#ff0000')
+    else:
+        if debug:
+            print('Failed to correctly calculate Added Path Length for a slice of an organ', flush=True)
+            # would be nice if we had the information to return here!
+
+    return added_path_length
 
 
-def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_matches, tolerance=1):
+def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_matches, tolerance=1.0, debug=False):
     result_list = []
 
     # for each structure if match list
@@ -96,6 +125,8 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
 
         ref_id, test_id = match_ids
         total_added_path_length = 0
+        test_contour_length = 0
+        ref_contour_length = 0
         total_true_positive_area = 0
         total_false_positive_area = 0
         total_false_negative_area = 0
@@ -112,6 +143,7 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
             if ref_set.ROINumber == ref_id:
                 structure_name = ref_set.ROIName
                 break
+
         print('Computing scores for: ', structure_name)
 
         ref_contour_set = None
@@ -127,121 +159,21 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 test_contour_set = contour_set
                 break
 
-        ref_polygon_dictionary = {}
-        test_polygon_dictionary = {}
-        ref_z_slices = []
-        test_z_slices = []
-
-        if ref_contour_set is not None:
-            # get the list of z-values for the reference set
-            for ref_contour_slice in ref_contour_set.ContourSequence:
-                n_ref_pts = int(ref_contour_slice.NumberOfContourPoints)
-                if n_ref_pts >= 4:
-                    ref_contour = ref_contour_slice.ContourData
-                    ref_z_slices.append(ref_contour[2])
-            # round to 1 decimal place (0.1mm) to make finding a match more robust
-            ref_z_slices = np.round(ref_z_slices, 1)
-            ref_z_slices = np.unique(ref_z_slices)
-
-            # now build the multi-polygon for each z-slice
-            for z_value in ref_z_slices:
-                ref_polygon = None
-                for ref_contour_slice in ref_contour_set.ContourSequence:
-                    n_ref_pts = int(ref_contour_slice.NumberOfContourPoints)
-                    if n_ref_pts >= 4:
-                        ref_contour = ref_contour_slice.ContourData
-                        if np.round(ref_contour[2], 1) == z_value:
-                            # make 2D contours
-                            ref_contour_2_d = np.zeros((n_ref_pts, 2))
-                            for i in range(0, n_ref_pts):
-                                ref_contour_2_d[i][0] = float(ref_contour[i * 3])
-                                ref_contour_2_d[i][1] = float(ref_contour[i * 3 + 1])
-                            if ref_polygon is None:
-                                # Make points into Polygon
-                                ref_polygon = Polygon(LinearRing(ref_contour_2_d))
-                            else:
-                                # Turn next set of points into a Polygon
-                                this_ref_polygon = Polygon(LinearRing(ref_contour_2_d))
-                                # Attempt to fix any self-intersections in the resulting polygon
-                                if not this_ref_polygon.is_valid:
-                                    this_ref_polygon = this_ref_polygon.buffer(0)
-                                if ref_polygon.contains(this_ref_polygon):
-                                    # if the new polygon is inside the old one, chop it out
-                                    ref_polygon = ref_polygon.difference(this_ref_polygon)
-                                elif ref_polygon.within(this_ref_polygon):
-                                    # if the new and vice versa
-                                    ref_polygon = this_ref_polygon.difference(ref_polygon)
-                                else:
-                                    # otherwise it is a floating blob to add
-                                    ref_polygon = ref_polygon.union(this_ref_polygon)
-                            # Attempt to fix any self-intersections in the resulting polygon
-                            if ref_polygon is not None:
-                                if not ref_polygon.is_valid:
-                                    ref_polygon = ref_polygon.buffer(0)
-                ref_polygon_dictionary[z_value] = ref_polygon
-
-        # get the list of z-values for the reference set
-        for test_contour_slice in test_contour_set.ContourSequence:
-            n_test_pts = int(test_contour_slice.NumberOfContourPoints)
-            if n_test_pts >= 4:
-                test_contour = test_contour_slice.ContourData
-                test_z_slices.append(test_contour[2])
-        test_z_slices = np.round(test_z_slices, 1)
-        test_z_slices = np.unique(test_z_slices)
-
-        if test_contour_set is not None:
-            # now build the multi-polygon for each z-slice
-            for z_value in test_z_slices:
-                test_polygon = None
-                for test_contour_slice in test_contour_set.ContourSequence:
-                    n_test_pts = int(test_contour_slice.NumberOfContourPoints)
-                    if n_test_pts >= 4:
-                        test_contour = test_contour_slice.ContourData
-                        if np.round(test_contour[2], 1) == z_value:
-                            # make 2D contours
-                            test_contour_2_d = np.zeros((n_test_pts, 2))
-                            for i in range(0, n_test_pts):
-                                test_contour_2_d[i][0] = float(test_contour[i * 3])
-                                test_contour_2_d[i][1] = float(test_contour[i * 3 + 1])
-
-                            if test_polygon is None:
-                                # Make points into Polygon
-                                test_polygon = Polygon(LinearRing(test_contour_2_d))
-                            else:
-                                # Turn next set of points into a Polygon
-                                this_test_polygon = Polygon(LinearRing(test_contour_2_d))
-                                # Attempt to fix any self-intersections
-                                if not this_test_polygon.is_valid:
-                                    this_test_polygon = this_test_polygon.buffer(0)
-                                if test_polygon.contains(this_test_polygon):
-                                    # if the new polygon is inside the old one, chop it out
-                                    test_polygon = test_polygon.difference(this_test_polygon)
-                                elif test_polygon.within(this_test_polygon):
-                                    # if the new and vice versa
-                                    test_polygon = this_test_polygon.difference(test_polygon)
-                                else:
-                                    # otherwise it is a floating blob to add
-                                    test_polygon = test_polygon.union(this_test_polygon)
-
-                            # Attempt to fix any self-intersections in the resulting polygon
-                            if not test_polygon.is_valid:
-                                test_polygon = test_polygon.buffer(0)
-                test_polygon_dictionary[z_value] = test_polygon
+        ref_polygon_dictionary, ref_z_slices = build_polygon_dictionary(ref_contour_set)
+        test_polygon_dictionary, test_z_slices = build_polygon_dictionary(test_contour_set)
 
         # for each slice in ref find corresponding slice in test
         for z_value, refpolygon in ref_polygon_dictionary.items():
             if z_value in test_z_slices:
                 testpolygon = test_polygon_dictionary[z_value]
 
-                debug = False
-
                 # if (structure_name == 'Lung_L') & (ref_contour[2] == -328):
                 #    print(ref_contour[2])
                 #    debug = True
 
-                if debug:
-                    polygon_plot.plot_polygons_and_linestrings(refpolygon, '#00ff00')
-                    polygon_plot.plot_polygons_and_linestrings(testpolygon, '#0000ff')
+                # if debug:
+                #     polygon_plot.plot_polygons_and_linestrings(refpolygon, '#00ff00')
+                #     polygon_plot.plot_polygons_and_linestrings(testpolygon, '#0000ff')
 
                 # go get some distance measures
                 # these get added to a big list so that we can calculate the 95% HD
@@ -253,9 +185,9 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 expanded_poly = cascaded_union(testpolygon.buffer(tolerance, 32, 1, 1))
                 contracted_poly = cascaded_union(testpolygon.buffer(-tolerance, 32, 1, 1))
 
-                if debug:
-                    polygon_plot.plot_polygons_and_linestrings(expanded_poly, '#ff0000')
-                    polygon_plot.plot_polygons_and_linestrings(contracted_poly, '#ff0000')
+                # if debug:
+                #     polygon_plot.plot_polygons_and_linestrings(expanded_poly, '#ff0000')
+                #     polygon_plot.plot_polygons_and_linestrings(contracted_poly, '#ff0000')
 
                 # add intersection of contours
                 contour_intersection = refpolygon.intersection(testpolygon)
@@ -282,15 +214,17 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 #    plt.plot(x, y, color='#0000ff')
 
                 # add length of remain contours
-
-                added_path = get_added_path_length(refpolygon, contracted_poly, expanded_poly)
+                added_path = get_added_path_length(refpolygon, contracted_poly, expanded_poly, debug=debug)
                 total_added_path_length = total_added_path_length + added_path
+                test_contour_length = test_contour_length + testpolygon.length
+                ref_contour_length = ref_contour_length + refpolygon.length
 
             else:
                 # if no corresponding slice, then add the whole ref length
                 # print('Adding path for whole contour')
                 path_length = refpolygon.length
                 total_added_path_length = total_added_path_length + path_length
+                ref_contour_length = ref_contour_length + refpolygon.length
                 # also the whole slice is false negative
                 total_false_negative_area = total_false_negative_area + refpolygon.area
                 total_ref_area = total_ref_area + refpolygon.area
@@ -301,7 +235,8 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
         # we also need to consider the slices for which there is a test contour but no reference
         for z_value, testpolygon in test_polygon_dictionary.items():
             if z_value not in ref_z_slices:
-                # path length doesn't get updated
+                # add path length doesn't get updated
+                test_contour_length = test_contour_length + testpolygon.length
                 # but the whole slice is false positive
                 total_false_positive_area = total_false_positive_area + testpolygon.area
                 total_test_area = total_test_area + testpolygon.area
@@ -310,13 +245,21 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
                 test_weighted_centroid_sum = test_weighted_centroid_sum + (testpolygon.area * centroid_point_np)
 
         # now we need to deal with the distance lists to work out the various distance measures
-        # NOTE: these are different calculations to those used in plastimatch. The book chapter will explain all...
+        # NOTE: these are different calculations to those used in plastimatch. The book chapter will explain all..
 
-        ref_centroid = ref_weighted_centroid_sum / total_ref_area
-        test_centroid = test_weighted_centroid_sum / total_test_area
+        # Added the test to avoid division bt zeros for empty structures.  We should have avoid it from happening before
+        if total_ref_area > 0:
+            ref_centroid = ref_weighted_centroid_sum / total_ref_area
+        else:
+            ref_centroid = np.array([0, 0, 0])
+        if total_test_area > 0:
+            test_centroid = test_weighted_centroid_sum / total_test_area
+        else:
+            test_centroid = np.array([0, 0, 0])
 
         if distance_ref_to_test == [] and distance_test_to_ref == []:
-            print('Contours are not on the same slices!')
+            if debug:
+                print('Empty contours or are not on the same slices!')
             hd = float('nan')
             ninety_five_hd = float('nan')
             ave_dist = float('nan')
@@ -329,7 +272,8 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
 
         # print('added path length = ', total_added_path_length)
         result_list.append((structure_name,
-                            [total_added_path_length, total_true_positive_area * slice_thickness,
+                            [total_added_path_length, ref_contour_length, test_contour_length,
+                             total_true_positive_area * slice_thickness,
                              total_false_negative_area * slice_thickness,
                              total_false_positive_area * slice_thickness, total_ref_area * slice_thickness,
                              total_test_area * slice_thickness,
@@ -338,7 +282,66 @@ def find_and_score_slice_matches(ref_rtss, test_rtss, slice_thickness, contour_m
     return result_list
 
 
-def estimate_slice_thickness(contour_data_set):
+def build_polygon_dictionary(contour_set):
+    # this function extracts the polygon data from the pydicom structure and
+    # converts it to a dictionary of Shapely polygons by the z slice
+    # TODO: Ideally this function could be improved for off-axis data.
+
+    polygon_dictionary = {}
+    z_slices = []
+    if contour_set is not None:
+        # get the list of z-values for the reference set
+        for contour_slice in contour_set.ContourSequence:
+            number_pts = int(contour_slice.NumberOfContourPoints)
+            if number_pts >= 3:  # We check for zero volume/level at the slice level
+                contour_points = contour_slice.ContourData
+                z_slices.append(contour_points[2])
+        # round to 1 decimal place (0.1mm) to make finding a match more robust
+        z_slices = np.round(z_slices, 1)
+        z_slices = np.unique(z_slices)
+
+        # now build the multi-polygon for each z-slice
+        for z_value in z_slices:
+            polygon_data = None
+            for contour_slice in contour_set.ContourSequence:
+                number_pts = int(contour_slice.NumberOfContourPoints)
+                if number_pts >= 3:
+                    contour_points = contour_slice.ContourData
+                    if np.round(contour_points[2], 1) == z_value:
+                        # make 2D contours
+                        contour_points_2d = np.zeros((number_pts, 2))
+                        for i in range(0, number_pts):
+                            contour_points_2d[i][0] = float(contour_points[i * 3])
+                            contour_points_2d[i][1] = float(contour_points[i * 3 + 1])
+                        if polygon_data is None:
+                            # Make points into Polygon
+                            polygon_data = Polygon(LinearRing(contour_points_2d))
+                        else:
+                            # Turn next set of points into a Polygon
+                            current_polygon = Polygon(LinearRing(contour_points_2d))
+                            # Attempt to fix any self-intersections in the resulting polygon
+                            if not current_polygon.is_valid:
+                                current_polygon = current_polygon.buffer(0)
+                            if polygon_data.contains(current_polygon):
+                                # if the new polygon is inside the old one, chop it out
+                                polygon_data = polygon_data.difference(current_polygon)
+                            elif polygon_data.within(current_polygon):
+                                # if the new and vice versa
+                                polygon_data = current_polygon.difference(polygon_data)
+                            else:
+                                # otherwise it is a floating blob to add
+                                polygon_data = polygon_data.union(current_polygon)
+                        # Attempt to fix any self-intersections in the resulting polygon
+                        if polygon_data is not None:
+                            if not polygon_data.is_valid:
+                                polygon_data = polygon_data.buffer(0)
+            # check this slice has a tangible size polygon.
+            if (polygon_data.length > 0) & (polygon_data.area > 0):
+                polygon_dictionary[z_value] = polygon_data
+    return polygon_dictionary, z_slices
+
+
+def estimate_slice_thickness(contour_data_set, debug=False):
     # this is a crude attempt to estimate the slice thickness without loading the image
     # we assume that the slices are equally spaced, and if we collect unique slice positions
     # for enough slices with contours then the modal difference will represent the slice thickness
@@ -347,9 +350,10 @@ def estimate_slice_thickness(contour_data_set):
     z_diff_list = []
 
     for contour_set in contour_data_set.ROIContourSequence:
-        for contour_slice in contour_set.ContourSequence:
-            contour_points = contour_slice.ContourData
-            z_list.append(contour_points[2])
+        if hasattr(contour_set, 'ContourSequence'):
+            for contour_slice in contour_set.ContourSequence:
+                contour_points = contour_slice.ContourData
+                z_list.append(contour_points[2])
 
     z_list = np.unique(z_list)
     z_list = np.sort(z_list)
@@ -361,13 +365,13 @@ def estimate_slice_thickness(contour_data_set):
         z_diff_list.append(z_diff)
 
     slice_thickness = spstats.mode(z_diff_list)[0][0]
-
-    print('slice thickness: ', slice_thickness)
+    if debug:
+        print('slice thickness: ', slice_thickness)
 
     return slice_thickness
 
 
-def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, output_filename=''):
+def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, output_filename='', tolerance=1.0):
     # load the DICOM files
     ground_truth_data = pydicom.read_file(reference_rtss_filename, False)
     test_data = pydicom.read_file(test_rtss_filename, False)
@@ -391,51 +395,34 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
 
         # Don't bother checking for a match if the reference is empty
         # TODO could also check for 0 length or 0 volume, but that is more effort
-        if ref_contour_set is not None:
-            if hasattr(ref_contour_set, 'ContourSequence'):
-                number_of_matches = 0
-                print('Checking structure: {:s}'.format(ref_name))
+        if ref_contour_set is None:
+            print(' Reference contour is empty for structure', ref_name)
+            continue
 
-                last_match_id = -1
-                for test_roi in test_data.StructureSetROISequence:
-                    test_name = test_roi.ROIName
+        if hasattr(ref_contour_set, 'ContourSequence'):
+            number_of_matches = 0
+            print('Checking structure: {:s}'.format(ref_name))
 
-                    if test_name == ref_name:
-                        number_of_matches = number_of_matches + 1
-                        last_match_id = test_roi.ROINumber
+            last_match_id = -1
+            for test_roi in test_data.StructureSetROISequence:
+                test_name = test_roi.ROIName
 
-                if number_of_matches == 1:
-                    contour_matches.append((ref_id, last_match_id))
-                elif number_of_matches == 0:
-                    print('\tNo match for structure: {:s}\n\tSkipping structure'.format(ref_name))
-                elif number_of_matches > 1:
-                    # TODO compare to each and report for all?
-                    print('\tMultiple matches for structure: {:s}\n\tSkipping structure'.format(ref_name))
+                if test_name.lower().strip() == ref_name.lower().strip():
+                    number_of_matches = number_of_matches + 1
+                    last_match_id = test_roi.ROINumber
 
-    resultlist = find_and_score_slice_matches(ground_truth_data, test_data, slice_thickness, contour_matches, 1)
+            if number_of_matches == 1:
+                contour_matches.append((ref_id, last_match_id))
+            elif number_of_matches == 0:
+                print('\tNo match for structure: {:s}\n\tSkipping structure'.format(ref_name))
+            elif number_of_matches > 1:
+                # TODO compare to each and report for all?
+                print('\tMultiple matches for structure: {:s}\n\tSkipping structure'.format(ref_name))
 
-    auto_contour_measures = []
+    resultlist = find_and_score_slice_matches(ground_truth_data, test_data, slice_thickness, contour_matches,
+                                              tolerance=tolerance)
 
-    for result in resultlist:
-        organname, scores = result
-        # scores[0] APL
-        # scores[1] TP volume
-        # scores[2] FN volume
-        # scores[3] FP volume
-        # scores[4] Ref volume
-        # scores[5] Test volume
-        # scores[6] Hausdorff
-        # scores[7] 95% Hausdorff
-        # scores[8] Average Distance
-        # scores[9] Median Distance
-        # scores[10] Reference Centroid
-        # scores[11] Test Centroid
-        results_structure = {'Organ': organname, 'APL': scores[0], 'TPVol': scores[1], 'FNVol': scores[2],
-                             'FPVol': scores[3], 'SEN': scores[1] / scores[4], 'SFP': scores[3] / scores[5],
-                             'three_D_DSC': 2 * scores[1] / (scores[4] + scores[5]), 'HD': scores[6],
-                             'ninety_five_HD': scores[7], 'AD': scores[8], 'MD': scores[9], 'ref_cent': scores[10],
-                             'test_cent': scores[11]}
-        auto_contour_measures.append(results_structure)
+    auto_contour_measures = format_result_list(resultlist)
 
     if output_filename != '':
         print('Writing results to: ', output_filename)
@@ -464,27 +451,33 @@ def score_case(reference_rtss_filename, test_rtss_filename, slice_thickness=0, o
         return auto_contour_measures
 
 
-def main():
-    # Find measures for two dicom RTSS. First is "ground truth", second is "test"
-    print('Scoring Stuff\n')
-    # hardcode for now.
-    # TODO Add a parse for arguments
+def format_result_list(result_list):
+    formatted_results = []
+    for result in result_list:
+        organ_name, scores = result
+        # scores[0] APL
+        # scores[1] Ref PL
+        # scores[2] Test PL
+        # scores[3] TP volume
+        # scores[4] FN volume
+        # scores[5] FP volume
+        # scores[6] Ref volume
+        # scores[7] Test volume
+        # scores[8] Hausdorff
+        # scores[9] 95% Hausdorff
+        # scores[10] Average Distance
+        # scores[11] Median Distance
+        # scores[12] Reference Centroid
+        # scores[13] Test Centroid
+        results_structure = {'Organ': organ_name, 'APL': scores[0], 'ref_length': scores[1], 'test_length': scores[2],
+                             'TPVol': scores[3], 'FNVol': scores[4],
+                             'FPVol': scores[5], 'ref_vol': scores[6], 'test_vol': scores[7],
+                             'SEN': scores[3] / scores[6], 'FPFrac': scores[5] / scores[6],
+                             'Inclusiveness': scores[3] / scores[7], 'PPV': scores[3]/(scores[3]+scores[5]),
+                             'three_D_DSC': 2 * scores[3] / (scores[6] + scores[7]), 'HD': scores[8],
+                             'ninety_five_HD': scores[9], 'AD': scores[10], 'MD': scores[11], 'ref_cent': scores[12],
+                             'test_cent': scores[13], 'cent_dist': np.linalg.norm(scores[12]-scores[13])}
+        formatted_results.append(results_structure)
+    return formatted_results
 
-    # ground_truth_file = 'C:/Mark/Book/Scoring code/TruthContours.dcm'
-    # ground_truth_file = 'C:\\Mark\Book\\Scoring code\\TestCases\\LCTSC-Test-S1-102\\Reference\\IM1.dcm'
-    # ground_truth_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Artificial contours\\APLtestGT/IM1.dcm'
-    ground_truth_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Consensus\\' \
-                        'Contoured by Research HN Consensus Atlas All\\IM1.DCM'
-    # ground_truth_file = 'C:\Mark\Book\Scoring code\Full.DCM'
-    # test_file = 'C:/Mark/Book/Scoring code/TestContours.dcm'
-    # test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\LCTSC-Test-S1-102\\Test\\IM1.dcm'
-    # test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Artificial contours\\APLtestTest/IM1.dcm'
-    test_file = 'C:\\Mark\\Book\\Scoring code\\TestCases\\Consensus\\DLCWithBrain\\IM1.DCM'
-    # test_file = 'C:\Mark\Book\Scoring code\Single.DCM'
-    output_file = 'C:/Mark/Book/Scoring code/Results.csv'
 
-    score_case(ground_truth_file, test_file, 0, output_file)
-
-
-if __name__ == '__main__':
-    main()

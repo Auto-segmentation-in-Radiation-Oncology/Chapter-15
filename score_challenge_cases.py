@@ -6,7 +6,7 @@ import time
 
 
 def main():
-    help_text = 'Scoring the test cases for the AAPM Throacic challenge'
+    help_text = 'Scoring the test cases for the AAPM Thoracic challenge'
     parser = argparse.ArgumentParser(description=help_text)
 
     help_text = 'Root location of the reference cases with "ground truth"'
@@ -18,8 +18,8 @@ def main():
     help_text = 'CSV file in which to store results'
     parser.add_argument('Output_CSV', type=str, help=help_text)
 
-    help_text = 'Set to "True" if running tests for live challenge data, '
-    parser.add_argument('-Live_challenge', type=bool, help=help_text, default=False)
+    help_text = 'Set if running tests for live challenge data'
+    parser.add_argument('-Live_challenge', help=help_text, action='store_true')
 
     args = parser.parse_args()
 
